@@ -6,17 +6,18 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/schema"
 	"github.com/mammothbane/fcc"
 	"gopkg.in/go-playground/validator.v9"
 )
 
 var (
-	assets          = http.FileServer(http.Dir("assets"))
-	dec                = schema.NewDecoder()
+	assets     = http.FileServer(http.Dir("assets"))
+	dec        = schema.NewDecoder()
 	proceeding *fcc.Proc
-	validate   = validator.New()
-	tmpl       = template.Must(template.ParseGlob("tmpl/*"))
+	validate      = validator.New()
+	tmpl              = template.Must(template.ParseGlob("tmpl/*"))
 )
 
 type formContent struct {
@@ -43,33 +44,18 @@ func (f formContent) toFilingInfo() *fcc.FilingInfo {
 	}
 }
 
-const PROCEEDING = "17-108"
+const (
+	PROCEEDING = "17-108"
+	COOKIE_ID  = "clientid"
+)
 
-func decodeInfo(r *http.Request) (*fcc.FilingInfo, error) {
-	if err := r.ParseForm(); err != nil {
-		return nil, err
-	}
-
-	var content formContent
-	if err := dec.Decode(&content, r.Form); err != nil {
-		return nil, err
-	}
-
-	if err := validate.Struct(content); err != nil {
-		return nil, err
-	}
-
-	return content.toFilingInfo(), nil
-}
-
-func handleSubmit(w http.ResponseWriter, r *http.Request) {
+func handleSubmit(c *gin.Context) {
 	//filing, err := fcc.Status("20170509864119531")
 	//if err != nil {
 	//	log.Fatal(err)
 	//}
 	//
 	//fmt.Println(filing)
-
 
 	log.Println("got submit")
 
@@ -82,17 +68,17 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			log.Printf(msg, append(args, err)...)
-			w.WriteHeader(failcode)
-			tmpl.ExecuteTemplate(w, "error.html", errMap)
+			c.HTML(failcode, "error.html", errMap)
 			return true
 		}
 		return false
 	}
 
-	info, err := decodeInfo(r)
-	if bail(err, http.StatusBadRequest, "Your form wasn't formatted properly. Make sure all the fields are filled out.", "Unable to decode filing information: %v") {
+	var content formContent
+	if c.Bind(&content) != nil {
 		return
 	}
+	info := content.toFilingInfo()
 
 	bck := &backoff{
 		factor:  2,
@@ -104,7 +90,7 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("submitting filing info...")
 
-	err = bck.do(func() error {
+	err := bck.do(func() error {
 		inner, err := info.Submit(proceeding)
 		if err == nil {
 			conf = inner
@@ -147,11 +133,23 @@ func main() {
 
 	log.Println("got proceeding", PROCEEDING)
 
-	http.Handle("/", assets)
-	http.HandleFunc("/submit", handleSubmit)
+	engine := gin.Default()
 
-	log.Println("starting server")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	g1 := engine.Group("/")
+	g1.StaticFS("/", http.Dir("assets"))
+	g1.POST("/submit", handleSubmit)
+	g1.Use(func(c *gin.Context) {
+		cookie, err := c.Request.Cookie(COOKIE_ID)
+		if err != nil || cookie == nil {
+			c.Next()
+		} else {
+			c.Redirect(http.StatusTemporaryRedirect, "/check")
+		}
+
+	})
+
+	engine.LoadHTMLGlob("tmpl/*")
+	log.Fatal(engine.Run(":8080"))
 }
 
 type backoff struct {
