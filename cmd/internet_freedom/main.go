@@ -1,6 +1,7 @@
 package main
 
 import (
+	"html/template"
 	"log"
 	"net/http"
 	"time"
@@ -11,10 +12,11 @@ import (
 )
 
 var (
-	assets     = http.FileServer(http.Dir("assets"))
-	dec        = schema.NewDecoder()
+	assets          = http.FileServer(http.Dir("assets"))
+	dec                = schema.NewDecoder()
 	proceeding *fcc.Proc
-	validate   *validator.Validate = validator.New()
+	validate   = validator.New()
+	tmpl       = template.Must(template.ParseGlob("tmpl/*"))
 )
 
 type formContent struct {
@@ -61,19 +63,34 @@ func decodeInfo(r *http.Request) (*fcc.FilingInfo, error) {
 }
 
 func handleSubmit(w http.ResponseWriter, r *http.Request) {
+	//filing, err := fcc.Status("20170509864119531")
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//
+	//fmt.Println(filing)
+
+
 	log.Println("got submit")
 
-	bail := func(err error, failcode int, msg string, args ...interface{}) bool {
+	bail := func(err error, failcode int, usermsg string, msg string, args ...interface{}) bool {
+
+		errMap := map[string]interface{}{
+			"message": usermsg,
+			"code":    failcode,
+		}
+
 		if err != nil {
 			log.Printf(msg, append(args, err)...)
 			w.WriteHeader(failcode)
+			tmpl.ExecuteTemplate(w, "error.html", errMap)
 			return true
 		}
 		return false
 	}
 
 	info, err := decodeInfo(r)
-	if bail(err, http.StatusBadRequest, "Unable to decode filing information: %v") {
+	if bail(err, http.StatusBadRequest, "Your form wasn't formatted properly. Make sure all the fields are filled out.", "Unable to decode filing information: %v") {
 		return
 	}
 
@@ -86,18 +103,19 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	var conf *fcc.FilingConfirmation
 
 	log.Println("submitting filing info...")
-	err = bck.do(func() *fcc.Error {
+
+	err = bck.do(func() error {
 		inner, err := info.Submit(proceeding)
 		if err == nil {
 			conf = inner
-		} else if !err.Fatal() {
+		} else {
 			log.Printf("Error: '%v'. Retrying.", err)
 		}
 
 		return err
 	})
 
-	if bail(err, http.StatusInternalServerError, "Failed submitting filing info: %v") {
+	if bail(err, http.StatusInternalServerError, "Sorry, the FCC server wouldn't accept the filing.", "Failed submitting filing info: %v") {
 		return
 	}
 
@@ -113,11 +131,11 @@ func main() {
 	}
 
 	log.Println("retrieving proceeding...")
-	err := bck.do(func() *fcc.Error {
+	err := bck.do(func() error {
 		inner, err := fcc.Proceeding(PROCEEDING)
 		if err == nil {
 			proceeding = inner
-		} else if !err.Fatal() {
+		} else {
 			log.Printf("Error: '%v'. Retrying.", err)
 		}
 
@@ -142,10 +160,10 @@ type backoff struct {
 	max     time.Duration
 }
 
-func (b *backoff) do(op func() *fcc.Error) *fcc.Error {
+func (b *backoff) do(op func() error) error {
 	for {
 		err := op()
-		if err == nil || err.Fatal() {
+		if err == nil {
 			return err
 		}
 

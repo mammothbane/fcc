@@ -3,6 +3,7 @@ package fcc
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"path"
 	"time"
@@ -95,35 +96,35 @@ type (
 	}
 )
 
-func Status(confirmationId string) (*ECFSFiling, *Error) {
+func Status(confirmationId string) (*ECFSFiling, error) {
 	fileVals := url.Values{}
 	fileVals.Add("api_key", c.ApiKey)
 
 	loc, err := ecfs_root.Parse(path.Join("filings" + confirmationId))
 	if err != nil {
-		return nil, newErr(err, true)
+		return nil, err
 	}
 	loc.RawQuery = fileVals.Encode()
 
 	resp, err := client.Get(loc.String())
 	defer resp.Body.Close()
 	if err != nil {
-		return nil, newErr(err, true)
+		return nil, err
 	}
 
 	if resp.StatusCode > 299 || resp.StatusCode < 200 {
-		return nil, strErr("Response code %v checking filing %v", false, resp.StatusCode, confirmationId)
+		return nil, fmt.Errorf("Response code %v checking filing %v", resp.StatusCode, confirmationId)
 	}
 
 	var ecfs ECFSFiling
 	err = json.NewDecoder(resp.Body).Decode(&ecfs)
-	return &ecfs, newErr(err, false)
+	return &ecfs, err
 }
 
 // Build an ECFSFiling for submission to the FCC.
-func (f FilingInfo) BuildECFS(proceedings ...*Proc) (*ECFSFiling, *Error) {
+func (f FilingInfo) BuildECFS(proceedings ...*Proc) (*ECFSFiling, error) {
 	if proceedings == nil {
-		return nil, strErr("Tried to build a filing with no proceedings.", true)
+		return nil, fmt.Errorf("Tried to build a filing with no proceedings.")
 	}
 
 	filing := ECFSFiling{
@@ -148,7 +149,7 @@ func (f FilingInfo) BuildECFS(proceedings ...*Proc) (*ECFSFiling, *Error) {
 }
 
 // Submits an ECFSFiling to the FCC, returning the confirmation if successful.
-func (e *ECFSFiling) Submit() (*FilingConfirmation, *Error) {
+func (e *ECFSFiling) Submit() (*FilingConfirmation, error) {
 	for i, p := range e.Proceedings {
 		e.Proceedings[i] = p.strip()
 	}
@@ -166,29 +167,29 @@ func (e *ECFSFiling) Submit() (*FilingConfirmation, *Error) {
 	}
 
 	if err := json.NewEncoder(&b).Encode(e); err != nil {
-		return nil, newErr(err, true)
+		return nil, err
 	}
 
 	resp, err := client.Post(loc.String(), "application/json", &b)
 	defer resp.Body.Close()
 
 	if err != nil {
-		return nil, newErr(err, true)
+		return nil, err
 	}
 
 	if resp.StatusCode > 299 || resp.StatusCode < 200 {
-		return nil, strErr("Response code %v on submission of filing %v.", false, resp.StatusCode, e)
+		return nil, fmt.Errorf("Response code %v on submission of filing %v.", resp.StatusCode, e)
 	}
 
 	var conf FilingConfirmation
 	err = json.NewDecoder(resp.Body).Decode(&conf)
 
-	return &conf, newErr(err, false)
+	return &conf, err
 }
 
 // Submit the FilingInfo to the FCC with the given proceedings.
 // Combines FilingInfo.BuildECFS() and ECFSFiling.Submit() into one call.
-func (f FilingInfo) Submit(proceedings ...*Proc) (*FilingConfirmation, *Error) {
+func (f FilingInfo) Submit(proceedings ...*Proc) (*FilingConfirmation, error) {
 	ecfs, err := f.BuildECFS(proceedings...)
 	if err != nil {
 		return nil, err
