@@ -1,7 +1,9 @@
+// An API to the FCC's ECFS system.
 package fcc
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -12,10 +14,40 @@ type conf struct {
 	ApiKey string `json:"api_key"`
 }
 
+type Error struct {
+	error
+	fatal bool
+}
+
+func (e *Error) Fatal() bool {
+	if e == nil {
+		return false
+	}
+	return e.fatal
+}
+
+func newErr(e error, fatal bool) *Error {
+	if e == nil {
+		return nil
+	}
+
+	return &Error{
+		error: e,
+		fatal: fatal,
+	}
+}
+
+func strErr(s string, fatal bool, args ...interface{}) *Error {
+	return &Error{
+		error: fmt.Errorf(s, args...),
+		fatal: fatal,
+	}
+}
+
 var (
-	ECFS_ROOT, _ = url.Parse("https://publicapi.fcc.gov/ecfs/")
+	ecfs_root, _ = url.Parse("https://publicapi.fcc.gov/ecfs/")
 	c            *conf
-	client       = http.DefaultClient
+	client              = http.DefaultClient
 )
 
 func init() {
